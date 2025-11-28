@@ -142,11 +142,56 @@ impl SchemaBuilder {
     }
 
     fn generate_header_name(base: &str, target_size: usize) -> String {
-        if base.len() >= target_size {
-            base.chars().take(target_size).collect()
+        // For very small columns, use unique single characters
+        if target_size <= 2 {
+            match base {
+                "id" => "id".chars().take(target_size).collect(),
+                _ => {
+                    // Extract column number for unique single character
+                    if let Some(num_str) = base.strip_prefix("col") {
+                        let num = num_str.parse::<usize>().unwrap_or(0);
+                        let unique_char = match num % 26 {
+                            0 => 'a', 1 => 'b', 2 => 'c', 3 => 'd', 4 => 'e',
+                            5 => 'f', 6 => 'g', 7 => 'h', 8 => 'i', 9 => 'j',
+                            10 => 'k', 11 => 'l', 12 => 'm', 13 => 'n', 14 => 'o',
+                            15 => 'p', 16 => 'q', 17 => 'r', 18 => 's', 19 => 't',
+                            20 => 'u', 21 => 'v', 22 => 'w', 23 => 'x', 24 => 'y',
+                            _ => 'z'
+                        };
+                        unique_char.to_string().chars().take(target_size).collect()
+                    } else {
+                        base.chars().take(target_size).collect()
+                    }
+                }
+            }
         } else {
-            let padding = target_size - base.len();
-            format!("{}{}", base, "x".repeat(padding))
+            // Normal case: ensure minimum size for uniqueness
+            let min_size = std::cmp::max(target_size, 4);
+            
+            if base.len() >= min_size {
+                base.chars().take(min_size).collect()
+            } else {
+                let padding = min_size - base.len();
+                // Use different padding characters to ensure uniqueness
+                let padding_char = match base.chars().next() {
+                    Some('i') => 'x',  // id -> xxx
+                    Some('c') => {
+                        // Extract column number for unique padding
+                        if let Some(num_str) = base.strip_prefix("col") {
+                            let num = num_str.parse::<usize>().unwrap_or(0);
+                            match num % 10 {
+                                0 => 'a', 1 => 'b', 2 => 'c', 3 => 'd', 4 => 'e',
+                                5 => 'f', 6 => 'g', 7 => 'h', 8 => 'i', 9 => 'j',
+                                _ => 'x'
+                            }
+                        } else {
+                            'x'
+                        }
+                    }
+                    _ => 'x',
+                };
+                format!("{}{}", base, padding_char.to_string().repeat(padding))
+            }
         }
     }
 

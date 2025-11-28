@@ -145,3 +145,32 @@ fn test_exact_size_targeting() -> anyhow::Result<()> {
     fs::remove_file(output_path)?;
     Ok(())
 }
+
+#[test]
+fn test_unique_headers() -> anyhow::Result<()> {
+    let target_size = 500;
+    let num_rows = 5;
+    
+    let schema = SchemaBuilder::build_schema(target_size, num_rows, 8, 12)?;
+    let mut generator = CsvGenerator::new(schema);
+    
+    let output_path = "test_unique_headers.csv";
+    generator.generate(output_path, num_rows)?;
+    
+    let content = fs::read_to_string(output_path)?;
+    let header_line = content.lines().next().unwrap();
+    let headers: Vec<&str> = header_line.split(',').collect();
+    
+    // Check that all headers are unique
+    let mut unique_headers = std::collections::HashSet::new();
+    for header in &headers {
+        assert!(!unique_headers.contains(*header), "Duplicate header found: {}", header);
+        unique_headers.insert(*header);
+    }
+    
+    // Check that we have the expected number of columns
+    assert!(headers.len() >= 8);
+    
+    fs::remove_file(output_path)?;
+    Ok(())
+}
