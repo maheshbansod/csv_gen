@@ -53,7 +53,7 @@ impl SchemaBuilder {
             let target_row_size = available_for_data / num_rows;
             
             // Try to create a schema with this column count
-            match Self::create_schema_for_exact_columns(num_columns, target_row_size, email_columns, domain_columns) {
+            match Self::create_schema_for_exact_columns(num_columns, target_row_size, email_columns, domain_columns, num_rows) {
                 Ok((columns, actual_row_size)) => {
                     let actual_header_size = Self::calculate_header_size(&columns);
                     let total_size = actual_header_size + (num_rows * actual_row_size);
@@ -93,6 +93,7 @@ impl SchemaBuilder {
         target_row_size: usize,
         email_columns: usize,
         domain_columns: usize,
+        num_rows: usize,
     ) -> Result<(Vec<crate::data::types::ColumnConfig>, usize)> {
         const COMMA_SIZE: usize = 1;
         const NEWLINE_SIZE: usize = 1;
@@ -105,15 +106,54 @@ impl SchemaBuilder {
             return Err(anyhow::anyhow!("Not enough space for {} columns", num_columns));
         }
         
-        let first_column_size = std::cmp::min(
-            (available_data_bytes / 5).max(4),
-            available_data_bytes / 2,
-        );
-        let remaining_bytes = available_data_bytes - first_column_size;
-        let other_column_size = remaining_bytes / (num_columns - 1);
+        // Smart ID column sizing based on actual row count
+        let max_id = num_rows;
+        let required_digits = max_id.to_string().len();
+        let first_column_size = required_digits + 3; // Small safety buffer
         
+        // Calculate minimum requirements for special columns
+        let min_email_size = 15; // Minimum viable email (john@x.com)
+        let min_domain_size = 10; // Minimum viable domain (x.com)
+        
+        // Reserve space for special columns first
+        let reserved_for_special = (email_columns * min_email_size) + (domain_columns * min_domain_size);
+        let remaining_for_regular = available_data_bytes.saturating_sub(first_column_size + reserved_for_special);
+        
+        // Calculate sizes for remaining columns
+        let remaining_columns = num_columns - 1 - email_columns - domain_columns;
+        let regular_column_size = if remaining_columns > 0 {
+            remaining_for_regular / remaining_columns
+        } else {
+            0
+        };
+        
+        // Distribute remaining space to email/domain columns
+        let extra_space_per_special = if remaining_columns > 0 {
+            remaining_for_regular % remaining_columns / (email_columns + domain_columns)
+        } else {
+            remaining_for_regular / (email_columns + domain_columns).max(1)
+        };
+        
+        let email_column_size = min_email_size + extra_space_per_special;
+        let domain_column_size = min_domain_size + extra_space_per_special;
+        
+        // Build column sizes array
         let mut column_sizes = vec![first_column_size];
-        column_sizes.extend(vec![other_column_size; num_columns - 1]);
+        
+        // Add email columns
+        for _ in 0..email_columns {
+            column_sizes.push(email_column_size);
+        }
+        
+        // Add domain columns  
+        for _ in 0..domain_columns {
+            column_sizes.push(domain_column_size);
+        }
+        
+        // Add regular columns
+        for _ in 0..remaining_columns {
+            column_sizes.push(regular_column_size);
+        }
         
         let actual_row_size = separator_overhead + column_sizes.iter().sum::<usize>();
         let columns = Self::create_columns(column_sizes, email_columns, domain_columns)?;
@@ -122,6 +162,8 @@ impl SchemaBuilder {
     }
 
 
+
+    
 
     fn create_columns(column_sizes: Vec<usize>, email_columns: usize, domain_columns: usize) -> Result<Vec<ColumnConfig>> {
         let mut columns = Vec::new();
