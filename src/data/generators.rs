@@ -1,10 +1,9 @@
 use rand::Rng;
-use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use crate::data::types::{ColumnConfig, DataType};
 
 pub struct DataGenerator {
-    rng: ThreadRng,
+    rng: rand::rngs::ThreadRng,
     id_counter: usize,
 }
 
