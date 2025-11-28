@@ -10,15 +10,13 @@ impl SchemaBuilder {
         min_columns: usize,
         max_columns: usize,
     ) -> Result<CsvSchema> {
-        let target_row_size = Self::calculate_target_row_size(target_size, num_rows)?;
-        let (_num_columns, column_sizes) = Self::optimize_column_distribution(
-            target_row_size,
+        // Use iterative approach to account for header size
+        let (columns, target_row_size, header_size) = Self::build_schema_iterative(
+            target_size,
+            num_rows,
             min_columns,
             max_columns,
         )?;
-
-        let columns = Self::create_columns(column_sizes)?;
-        let header_size = Self::calculate_header_size(&columns);
 
         Ok(CsvSchema {
             columns,
@@ -27,49 +25,95 @@ impl SchemaBuilder {
         })
     }
 
-    fn calculate_target_row_size(target_size: usize, num_rows: usize) -> Result<usize> {
-        if num_rows == 0 {
-            return Err(anyhow::anyhow!("Number of rows must be greater than 0"));
-        }
-        Ok(target_size / num_rows)
-    }
-
-    fn optimize_column_distribution(
-        target_row_size: usize,
+    fn build_schema_iterative(
+        target_size: usize,
+        num_rows: usize,
         min_columns: usize,
         max_columns: usize,
-    ) -> Result<(usize, Vec<usize>)> {
+    ) -> Result<(Vec<crate::data::types::ColumnConfig>, usize, usize)> {
+        let mut best_result = None;
+        let mut best_error = usize::MAX;
+        
+        // Try different column counts to find the best fit
+        for num_columns in min_columns..=max_columns {
+            // Calculate what row size we need to hit the target
+            let estimated_header_size = Self::estimate_header_for_columns(num_columns);
+            let available_for_data = target_size.saturating_sub(estimated_header_size);
+            
+            if available_for_data == 0 || num_rows == 0 {
+                continue;
+            }
+            
+            let target_row_size = available_for_data / num_rows;
+            
+            // Try to create a schema with this column count
+            match Self::create_schema_for_exact_columns(num_columns, target_row_size) {
+                Ok((columns, actual_row_size)) => {
+                    let actual_header_size = Self::calculate_header_size(&columns);
+                    let total_size = actual_header_size + (num_rows * actual_row_size);
+                    
+                    let size_error = if total_size > target_size {
+                        total_size - target_size
+                    } else {
+                        target_size - total_size
+                    };
+                    
+                    // Update best result if this is closer to target
+                    if size_error < best_error {
+                        best_error = size_error;
+                        best_result = Some((columns, actual_row_size, actual_header_size));
+                        
+                        // If we're very close (within 0.1%), we can stop
+                        if size_error < target_size / 1000 {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        
+        best_result.ok_or_else(|| anyhow::anyhow!("Could not find suitable column configuration"))
+    }
+
+    fn estimate_header_for_columns(num_columns: usize) -> usize {
+        // Estimate header size based on column count
+        let avg_column_name_length = 8; // Average like "col1xxxx"
+        num_columns * avg_column_name_length + (num_columns - 1)
+    }
+
+    fn create_schema_for_exact_columns(
+        num_columns: usize,
+        target_row_size: usize,
+    ) -> Result<(Vec<crate::data::types::ColumnConfig>, usize)> {
         const COMMA_SIZE: usize = 1;
         const NEWLINE_SIZE: usize = 1;
         const MIN_COLUMN_DATA_SIZE: usize = 2;
-
-        for num_columns in min_columns..=max_columns {
-            let separator_overhead = (num_columns - 1) * COMMA_SIZE + NEWLINE_SIZE;
-            let available_data_bytes = target_row_size.saturating_sub(separator_overhead);
-            
-            if available_data_bytes < num_columns * MIN_COLUMN_DATA_SIZE {
-                continue;
-            }
-
-            let first_column_size = std::cmp::min(
-                (available_data_bytes / 5).max(4),
-                available_data_bytes / 2,
-            );
-            let remaining_bytes = available_data_bytes - first_column_size;
-            let other_column_size = remaining_bytes / (num_columns - 1);
-
-            let mut column_sizes = vec![first_column_size];
-            column_sizes.extend(vec![other_column_size; num_columns - 1]);
-
-            let actual_row_size = separator_overhead + column_sizes.iter().sum::<usize>();
-            
-            if (actual_row_size as f64 - target_row_size as f64).abs() < target_row_size as f64 * 0.1 {
-                return Ok((num_columns, column_sizes));
-            }
+        
+        let separator_overhead = (num_columns - 1) * COMMA_SIZE + NEWLINE_SIZE;
+        let available_data_bytes = target_row_size.saturating_sub(separator_overhead);
+        
+        if available_data_bytes < num_columns * MIN_COLUMN_DATA_SIZE {
+            return Err(anyhow::anyhow!("Not enough space for {} columns", num_columns));
         }
-
-        Err(anyhow::anyhow!("Could not find suitable column configuration"))
+        
+        let first_column_size = std::cmp::min(
+            (available_data_bytes / 5).max(4),
+            available_data_bytes / 2,
+        );
+        let remaining_bytes = available_data_bytes - first_column_size;
+        let other_column_size = remaining_bytes / (num_columns - 1);
+        
+        let mut column_sizes = vec![first_column_size];
+        column_sizes.extend(vec![other_column_size; num_columns - 1]);
+        
+        let actual_row_size = separator_overhead + column_sizes.iter().sum::<usize>();
+        let columns = Self::create_columns(column_sizes)?;
+        
+        Ok((columns, actual_row_size))
     }
+
+
 
     fn create_columns(column_sizes: Vec<usize>) -> Result<Vec<ColumnConfig>> {
         let mut columns = Vec::new();

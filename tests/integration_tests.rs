@@ -124,3 +124,24 @@ fn test_size_approximation() -> anyhow::Result<()> {
     fs::remove_file(output_path)?;
     Ok(())
 }
+
+#[test]
+fn test_exact_size_targeting() -> anyhow::Result<()> {
+    let target_size = 1024; // 1KB
+    let num_rows = 10;
+    
+    let schema = SchemaBuilder::build_schema(target_size, num_rows, 5, 15)?;
+    let mut generator = CsvGenerator::new(schema);
+    
+    let output_path = "test_exact_size.csv";
+    generator.generate(output_path, num_rows)?;
+    
+    let actual_size = fs::metadata(output_path)?.len() as usize;
+    
+    // Should be within 2% of target size
+    let tolerance = target_size as f64 * 0.02;
+    assert!((actual_size as f64 - target_size as f64).abs() <= tolerance);
+    
+    fs::remove_file(output_path)?;
+    Ok(())
+}
