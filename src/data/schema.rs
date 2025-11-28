@@ -9,6 +9,8 @@ impl SchemaBuilder {
         num_rows: usize,
         min_columns: usize,
         max_columns: usize,
+        email_columns: usize,
+        domain_columns: usize,
     ) -> Result<CsvSchema> {
         // Use iterative approach to account for header size
         let (columns, target_row_size, header_size) = Self::build_schema_iterative(
@@ -16,6 +18,8 @@ impl SchemaBuilder {
             num_rows,
             min_columns,
             max_columns,
+            email_columns,
+            domain_columns,
         )?;
 
         Ok(CsvSchema {
@@ -30,6 +34,8 @@ impl SchemaBuilder {
         num_rows: usize,
         min_columns: usize,
         max_columns: usize,
+        email_columns: usize,
+        domain_columns: usize,
     ) -> Result<(Vec<crate::data::types::ColumnConfig>, usize, usize)> {
         let mut best_result = None;
         let mut best_error = usize::MAX;
@@ -47,7 +53,7 @@ impl SchemaBuilder {
             let target_row_size = available_for_data / num_rows;
             
             // Try to create a schema with this column count
-            match Self::create_schema_for_exact_columns(num_columns, target_row_size) {
+            match Self::create_schema_for_exact_columns(num_columns, target_row_size, email_columns, domain_columns) {
                 Ok((columns, actual_row_size)) => {
                     let actual_header_size = Self::calculate_header_size(&columns);
                     let total_size = actual_header_size + (num_rows * actual_row_size);
@@ -85,6 +91,8 @@ impl SchemaBuilder {
     fn create_schema_for_exact_columns(
         num_columns: usize,
         target_row_size: usize,
+        email_columns: usize,
+        domain_columns: usize,
     ) -> Result<(Vec<crate::data::types::ColumnConfig>, usize)> {
         const COMMA_SIZE: usize = 1;
         const NEWLINE_SIZE: usize = 1;
@@ -108,27 +116,29 @@ impl SchemaBuilder {
         column_sizes.extend(vec![other_column_size; num_columns - 1]);
         
         let actual_row_size = separator_overhead + column_sizes.iter().sum::<usize>();
-        let columns = Self::create_columns(column_sizes)?;
+        let columns = Self::create_columns(column_sizes, email_columns, domain_columns)?;
         
         Ok((columns, actual_row_size))
     }
 
 
 
-    fn create_columns(column_sizes: Vec<usize>) -> Result<Vec<ColumnConfig>> {
+    fn create_columns(column_sizes: Vec<usize>, email_columns: usize, domain_columns: usize) -> Result<Vec<ColumnConfig>> {
         let mut columns = Vec::new();
+        let mut email_count = 0;
+        let mut domain_count = 0;
         
         for (i, size) in column_sizes.iter().enumerate() {
-            let name = if i == 0 {
-                Self::generate_header_name("id", *size)
+            let (name, data_type) = if i == 0 {
+                (Self::generate_header_name("id", *size), DataType::UniqueId)
+            } else if email_count < email_columns {
+                email_count += 1;
+                (Self::generate_header_name(&format!("email_{}", email_count), *size), DataType::Email)
+            } else if domain_count < domain_columns {
+                domain_count += 1;
+                (Self::generate_header_name(&format!("domain_{}", domain_count), *size), DataType::Domain)
             } else {
-                Self::generate_header_name(&format!("col{}", i), *size)
-            };
-
-            let data_type = if i == 0 {
-                DataType::UniqueId
-            } else {
-                DataType::String
+                (Self::generate_header_name(&format!("col{}", i), *size), DataType::String)
             };
 
             columns.push(ColumnConfig {

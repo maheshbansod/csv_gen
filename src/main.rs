@@ -14,6 +14,8 @@ fn main() -> anyhow::Result<()> {
         num_rows,
         args.min_columns,
         args.max_columns,
+        args.email_columns,
+        args.domain_columns,
     )?;
     
     println!("Schema: {} columns, target row size: {} bytes", 

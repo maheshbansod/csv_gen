@@ -35,13 +35,30 @@ impl DataGenerator {
                 self.rng.gen_range(0..max).to_string()
             }
             DataType::Email => {
-                let domains = vec!["test.com", "example.org", "demo.net"];
-                let domain = domains[self.rng.gen_range(0..domains.len())];
-                let local_len = column.size_bytes.saturating_sub(domain.len() + 1);
-                let local: String = (0..local_len)
-                    .map(|_| self.rng.gen_range(b'a'..=b'z') as char)
-                    .collect();
-                format!("{}@{}", local, domain)
+                // Generate email that fits exactly in column size
+                if column.size_bytes <= 5 {
+                    // Very small: just use single letter @ short domain
+                    "a@b.co".chars().take(column.size_bytes).collect()
+                } else if column.size_bytes <= 8 {
+                    // Small: 2-3 chars @ short domain
+                    let domains = ["a.co", "b.io", "c.dev"];
+                    let domain = domains[self.rng.gen_range(0..domains.len())];
+                    let local_len = column.size_bytes.saturating_sub(domain.len() + 1);
+                    let local: String = (0..local_len)
+                        .map(|_| self.rng.gen_range(b'a'..=b'z') as char)
+                        .collect();
+                    format!("{}@{}", local, domain)
+                } else {
+                    // Larger: normal email generation
+                    let domains = ["test.com", "example.org", "demo.net"];
+                    let domain = domains[self.rng.gen_range(0..domains.len())];
+                    let local_len = std::cmp::min(column.size_bytes.saturating_sub(domain.len() + 1), 10);
+                    let local: String = (0..local_len)
+                        .map(|_| self.rng.gen_range(b'a'..=b'z') as char)
+                        .collect();
+                    let email = format!("{}@{}", local, domain);
+                    email.chars().take(column.size_bytes).collect()
+                }
             }
             DataType::Name => {
                 let first_names = vec!["John", "Jane", "Bob", "Alice", "Tom", "Sue"];
@@ -53,6 +70,26 @@ impl DataGenerator {
                     name.chars().take(column.size_bytes).collect()
                 } else {
                     name
+                }
+            }
+            DataType::Domain => {
+                // Generate domain that fits exactly in column size
+                if column.size_bytes <= 5 {
+                    // Very small: just use short domain
+                    "a.co".chars().take(column.size_bytes).collect()
+                } else if column.size_bytes <= 8 {
+                    // Small: short domain with optional subdomain
+                    let domains = ["a.co", "b.io", "c.dev", "d.app"];
+                    let domain = domains[self.rng.gen_range(0..domains.len())];
+                    domain.chars().take(column.size_bytes).collect()
+                } else {
+                    // Larger: normal domain generation
+                    let domains = ["example.com", "test.org", "demo.net"];
+                    let subdomains = ["", "www.", "api.", "app."];
+                    let domain = domains[self.rng.gen_range(0..domains.len())];
+                    let subdomain = subdomains[self.rng.gen_range(0..subdomains.len())];
+                    let full_domain = format!("{}{}", subdomain, domain);
+                    full_domain.chars().take(column.size_bytes).collect()
                 }
             }
         }

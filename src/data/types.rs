@@ -14,6 +14,7 @@ pub enum DataType {
     Number,
     Email,
     Name,
+    Domain,
 }
 
 #[derive(Debug, Clone)]

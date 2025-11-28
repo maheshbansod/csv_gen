@@ -23,6 +23,14 @@ pub struct Args {
     /// Maximum number of columns
     #[arg(long, default_value = "100")]
     pub max_columns: usize,
+
+    /// Number of email columns to generate
+    #[arg(long, default_value = "0")]
+    pub email_columns: usize,
+
+    /// Number of domain columns to generate
+    #[arg(long, default_value = "0")]
+    pub domain_columns: usize,
 }
 
 impl Args {
