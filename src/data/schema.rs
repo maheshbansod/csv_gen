@@ -172,18 +172,19 @@ impl SchemaBuilder {
         let mut columns = Vec::new();
         let mut email_count = 0;
         let mut domain_count = 0;
+        let mut used_names = std::collections::HashSet::new();
         
         for (i, size) in column_sizes.iter().enumerate() {
             let (name, data_type) = if i == 0 {
-                (Self::generate_header_name("id", *size), DataType::UniqueId)
+                (Self::generate_unique_header_name("id", *size, &mut used_names), DataType::UniqueId)
             } else if email_count < email_columns {
                 email_count += 1;
-                (Self::generate_header_name(&format!("email_{}", email_count), *size), DataType::Email)
+                (Self::generate_unique_header_name(&format!("email_{}", email_count), *size, &mut used_names), DataType::Email)
             } else if domain_count < domain_columns {
                 domain_count += 1;
-                (Self::generate_header_name(&format!("domain_{}", domain_count), *size), DataType::Domain)
+                (Self::generate_unique_header_name(&format!("domain_{}", domain_count), *size, &mut used_names), DataType::Domain)
             } else {
-                (Self::generate_header_name(&format!("col{}", i), *size), DataType::String)
+                (Self::generate_unique_header_name(&format!("col{}", i), *size, &mut used_names), DataType::String)
             };
 
             columns.push(ColumnConfig {
@@ -194,6 +195,54 @@ impl SchemaBuilder {
         }
 
         Ok(columns)
+    }
+
+    fn generate_unique_header_name(base: &str, target_size: usize, used_names: &mut std::collections::HashSet<String>) -> String {
+        let mut candidate = Self::generate_header_name(base, target_size);
+        let mut suffix = 1;
+        
+        // Keep adding suffix until we find a unique name
+        while used_names.contains(&candidate) {
+            let suffix_str = suffix.to_string();
+            
+            if target_size == 1 {
+                // For single character columns, cycle through more options
+                let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+                let char_idx = (suffix - 1) % chars.len();
+                candidate = chars.chars().nth(char_idx).unwrap().to_string();
+            } else if target_size == 2 {
+                // For two character columns, use combinations
+                let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+                let first_idx = (suffix - 1) / chars.len();
+                let second_idx = (suffix - 1) % chars.len();
+                if first_idx < chars.len() {
+                    candidate = format!("{}{}", 
+                        chars.chars().nth(first_idx).unwrap(),
+                        chars.chars().nth(second_idx).unwrap()
+                    );
+                } else {
+                    // Fall back to using numbers
+                    candidate = format!("{:0width$}", suffix, width = target_size).chars().take(target_size).collect();
+                }
+            } else if base.len() + suffix_str.len() <= target_size {
+                // If we can fit the suffix, append it
+                candidate = format!("{}{}", base.chars().take(target_size - suffix_str.len()).collect::<String>(), suffix_str);
+            } else {
+                // Truncate base to make room for suffix
+                let available_for_base = target_size.saturating_sub(suffix_str.len());
+                candidate = format!("{}{}", base.chars().take(available_for_base).collect::<String>(), suffix_str);
+            }
+            
+            suffix += 1;
+            
+            // Safety check to prevent infinite loops
+            if suffix > 10000 {
+                panic!("Could not generate unique header name for base: {}, target_size: {}", base, target_size);
+            }
+        }
+        
+        used_names.insert(candidate.clone());
+        candidate
     }
 
     fn generate_header_name(base: &str, target_size: usize) -> String {
