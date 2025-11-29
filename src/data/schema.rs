@@ -69,8 +69,8 @@ impl SchemaBuilder {
                         best_error = size_error;
                         best_result = Some((columns, actual_row_size, actual_header_size));
                         
-                        // If we're very close (within 0.1%), we can stop
-                        if size_error < target_size / 1000 {
+                        // If we're extremely close (within 100 bytes), we can stop
+                        if size_error < 100 {
                             break;
                         }
                     }
@@ -153,9 +153,15 @@ impl SchemaBuilder {
             column_sizes.push(domain_column_size);
         }
         
-        // Add regular columns
-        for _ in 0..remaining_columns {
-            column_sizes.push(regular_column_size);
+        // Add regular columns and distribute remainder
+        let remainder = remaining_for_regular % remaining_columns.max(1);
+        for i in 0..remaining_columns {
+            let size = if i < remainder {
+                regular_column_size + 1
+            } else {
+                regular_column_size
+            };
+            column_sizes.push(size);
         }
         
         let actual_row_size = separator_overhead + column_sizes.iter().sum::<usize>();
@@ -197,7 +203,7 @@ impl SchemaBuilder {
         Ok(columns)
     }
 
-    fn generate_unique_header_name(base: &str, target_size: usize, used_names: &mut std::collections::HashSet<String>) -> String {
+fn generate_unique_header_name(base: &str, target_size: usize, used_names: &mut std::collections::HashSet<String>) -> String {
         let mut candidate = Self::generate_header_name(base, target_size);
         let mut suffix = 1;
         
@@ -206,38 +212,56 @@ impl SchemaBuilder {
             let suffix_str = suffix.to_string();
             
             if target_size == 1 {
-                // For single character columns, cycle through more options
-                let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+                // For single character columns, use a much larger set of options
+                let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
                 let char_idx = (suffix - 1) % chars.len();
                 candidate = chars.chars().nth(char_idx).unwrap().to_string();
             } else if target_size == 2 {
-                // For two character columns, use combinations
-                let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-                let first_idx = (suffix - 1) / chars.len();
-                let second_idx = (suffix - 1) % chars.len();
-                if first_idx < chars.len() {
-                    candidate = format!("{}{}", 
-                        chars.chars().nth(first_idx).unwrap(),
-                        chars.chars().nth(second_idx).unwrap()
-                    );
-                } else {
-                    // Fall back to using numbers
-                    candidate = format!("{:0width$}", suffix, width = target_size).chars().take(target_size).collect();
-                }
-            } else if base.len() + suffix_str.len() <= target_size {
-                // If we can fit the suffix, append it
-                candidate = format!("{}{}", base.chars().take(target_size - suffix_str.len()).collect::<String>(), suffix_str);
+                // For two character columns, use combinations with larger charset
+                let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+                let total_combinations = chars.len() * chars.len();
+                let combo_idx = (suffix - 1) % total_combinations;
+                let first_idx = combo_idx / chars.len();
+                let second_idx = combo_idx % chars.len();
+                candidate = format!("{}{}", 
+                    chars.chars().nth(first_idx).unwrap(),
+                    chars.chars().nth(second_idx).unwrap()
+                );
             } else {
-                // Truncate base to make room for suffix
-                let available_for_base = target_size.saturating_sub(suffix_str.len());
-                candidate = format!("{}{}", base.chars().take(available_for_base).collect::<String>(), suffix_str);
+                let base_len = base.len();
+                if base_len + suffix_str.len() <= target_size {
+                    // If we can fit the suffix, append it
+                    candidate = format!("{}{}", base.chars().take(target_size - suffix_str.len()).collect::<String>(), suffix_str);
+                } else {
+                    // Truncate base to make room for suffix
+                    let available_for_base = target_size.saturating_sub(suffix_str.len());
+                    candidate = format!("{}{}", base.chars().take(available_for_base).collect::<String>(), suffix_str);
+                }
             }
             
             suffix += 1;
             
-            // Safety check to prevent infinite loops
-            if suffix > 10000 {
-                panic!("Could not generate unique header name for base: {}, target_size: {}", base, target_size);
+            // Safety check to prevent infinite loops - increase threshold for very small columns
+            let max_attempts = if target_size <= 2 { 100000 } else { 10000 };
+            if suffix > max_attempts {
+                // For very small columns, fall back to a different strategy
+                if target_size == 1 {
+                    // Use sequential numbers as strings, take last character
+                    candidate = format!("{}", suffix).chars().last().unwrap().to_string();
+                } else if target_size == 2 {
+                    // Use sequential numbers, take last 2 characters
+                    candidate = format!("{:02}", suffix).chars().take(2).collect();
+                } else {
+                    panic!("Could not generate unique header name for base: {}, target_size: {}", base, target_size);
+                }
+                
+                // If still not unique, continue with incremented suffix
+                if used_names.contains(&candidate) {
+                    suffix += 1;
+                    continue;
+                } else {
+                    break;
+                }
             }
         }
         
