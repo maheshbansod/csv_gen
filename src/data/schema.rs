@@ -128,10 +128,13 @@ impl SchemaBuilder {
         };
         
         // Distribute remaining space to email/domain columns
-        let extra_space_per_special = if remaining_columns > 0 {
-            remaining_for_regular % remaining_columns / (email_columns + domain_columns)
+        let total_special_columns = email_columns + domain_columns;
+        let extra_space_per_special = if remaining_columns > 0 && total_special_columns > 0 {
+            remaining_for_regular % remaining_columns / total_special_columns
+        } else if total_special_columns > 0 {
+            remaining_for_regular / total_special_columns
         } else {
-            remaining_for_regular / (email_columns + domain_columns).max(1)
+            0
         };
         
         let email_column_size = min_email_size + extra_space_per_special;
